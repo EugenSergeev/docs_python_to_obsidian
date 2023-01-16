@@ -125,13 +125,14 @@ def fill_import_groups(files_data, py_file_objects):
                     files_data[py_obj]["# Imported modules"].add(row)
                     break
                 elif i == len(module_name_path.parts):
-                    class_ = import_.abs_path
-                    if class_ in all_classes_links:
-                        module_name = Path("/".join(class_.split(".")[:-1])).as_posix() + ".py"
-                        class_name = class_.split(".")[-1]
-                        files_data[py_obj]["# Imported classes"].append(f"[[{module_name}#{class_name}|{class_name}]]")
+                    # class_ = import_.abs_path
+                    if import_.abs_path in all_classes_links:
+                        module_name = Path("/".join(import_.abs_path.split(".")[:-1])).as_posix() + ".py"
+                        # class_name = class_.split(".")[-1]
+                        files_data[py_obj]["# Imported classes"].append(
+                            f"[[{module_name}#{import_.name}|{import_.name}]]")
                     else:
-                        files_data[py_obj]["# Other imports"].append(class_)
+                        files_data[py_obj]["# Other imports"].append(import_.abs_path)
 
 
 def create_md_files_from_dict(files_data, docs_path):
