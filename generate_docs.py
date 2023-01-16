@@ -1,11 +1,12 @@
 import re
 from pathlib import Path
+from loguru import logger
 
 START_ROWS = "Здесь будут комментарии из файла\n\n\n\n\n\n\n\n\n\n---\n"
 
-PROJECT_PATH = Path().cwd()
-DOCS_PATH = PROJECT_PATH / "Docs"
-ENV_PATH = PROJECT_PATH / "venv"
+CURRENT_DIR = Path().cwd()
+ENV_PATH_NAME = "venv"
+DOCS_PATH_NAME = "Docs"
 
 
 class Import:
@@ -21,15 +22,17 @@ class Import:
 
 
 class PyFile:
-    def __init__(self, file_name: str | Path):
+    def __init__(self, file_name: str | Path, project_path: str| Path):
         self.file = Path(file_name)
+        self.project_path = Path(project_path)
         self.file_rows = self.get_rows_of_py_file()
-        self.classes = self.get_classes_of_py_file()
+        self.classes = self.get_classes()
         self.import_objects = self.get_imports()
         self.filename = self.file.as_posix()
 
     def get_rows_of_py_file(self):
-        with self.file.open(encoding='utf-8') as file:
+        file = self.project_path / self.file
+        with file.open(encoding='utf-8') as file:
             file_rows = file.readlines()
         return file_rows
 
@@ -65,9 +68,9 @@ class PyFile:
         parent = self.file
         for _ in range(dot_count):
             parent = parent.parent
-        return ".".join(parent.parts)+"."
+        return ".".join(parent.parts) + "."
 
-    def get_classes_of_py_file(self):
+    def get_classes(self):
         class_definition_string = 'class '
         classes_rows = [row for row in self.file_rows if row.startswith(class_definition_string)]
         classes_names = []
@@ -77,7 +80,7 @@ class PyFile:
             classes_names.append(class_name[0])
         return classes_names
 
-    def get_module_name(self):
+    def get_module_name_for_import(self):
         return self.filename[:-3].replace("/", ".")
 
     def __repr__(self):
@@ -87,9 +90,9 @@ class PyFile:
         return self.__repr__()
 
 
-def get_all_py_files_without_env(path_project=Path().cwd()):
+def get_all_py_files_without_env(env_path, path_project):
     all_py_files = [file for file in path_project.glob("**/*.py")
-                    if not str(file.absolute()).startswith(str(ENV_PATH.absolute()))]
+                    if not str(file.absolute()).startswith(str(env_path.absolute()))]
     py_files = []
     for file in all_py_files:
         file_name_without_path_project = str(file.absolute().as_posix()).replace(
@@ -98,18 +101,20 @@ def get_all_py_files_without_env(path_project=Path().cwd()):
         py_files.append(file_)
     return py_files
 
-
-if __name__ == '__main__':
-
-    py_files = get_all_py_files_without_env(PROJECT_PATH)
-    py_file_objects = [PyFile(file_path) for file_path in py_files]
+@logger.catch()
+def start_generate(project_path=CURRENT_DIR, env_path_name=ENV_PATH_NAME, docs_path=None):
+    project_path = Path(project_path)
+    docs_path = Path(docs_path) if docs_path else Path().cwd() / DOCS_PATH_NAME / project_path.name
+    env_path = Path(project_path) / Path(env_path_name)
+    py_files = get_all_py_files_without_env(env_path, project_path)
+    py_file_objects = [PyFile(file_path, project_path) for file_path in py_files]
 
     files_text_dict = {}  # тут хранятся строки для всех файлов MD
     for py_file in py_files:
         rows = [START_ROWS, f'[Link to file]({py_file.absolute().as_uri()})']
         files_text_dict[py_file.as_posix()] = rows
 
-    all_classes_links = {py_obj.get_module_name() + "." + class_: f"{py_obj.filename}#{class_}"
+    all_classes_links = {py_obj.get_module_name_for_import() + "." + class_: f"{py_obj.filename}#{class_}"
                          for py_obj in py_file_objects
                          for class_ in py_obj.classes}
 
@@ -158,10 +163,14 @@ if __name__ == '__main__':
                 files_text_dict[py_file_name].append(import_)
 
     for py_file_name, rows in files_text_dict.items():
-        doc_file = DOCS_PATH / (py_file_name + ".md")
+        doc_file = docs_path / (py_file_name + ".md")
         doc_file.parent.mkdir(parents=True, exist_ok=True)
         try:
             with doc_file.open(mode="w", encoding='utf-8') as doc_file_obj:
                 doc_file_obj.write("\n".join(rows))
         except:
             pass
+
+
+if __name__ == '__main__':
+    start_generate(r"d:\dev\RFM")
