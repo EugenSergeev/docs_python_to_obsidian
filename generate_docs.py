@@ -1,4 +1,5 @@
 import re
+from os import walk
 from pathlib import Path
 from loguru import logger
 
@@ -108,6 +109,48 @@ def get_all_py_files_without_env(env_path, path_project):
     return py_files
 
 
+def fill_import_groups(files_data, py_file_objects):
+    all_classes_links = {py_obj.get_module_name_for_import() + "." + class_
+                         for py_obj in py_file_objects
+                         for class_ in py_obj.classes}
+
+    for py_obj in py_file_objects:
+        for import_ in py_obj.import_elements:
+            module_name_path = Path(import_.abs_path.replace(".", "/"))
+            for i in range(len(module_name_path.parts), 0, -1):
+                name = "/".join(module_name_path.parts[:i])
+                name_with_py = Path(str(name) + ".py")
+                if name_with_py in [obj.file for obj in py_file_objects]:
+                    row = f"[[{name_with_py.as_posix()}|{name_with_py.name}]]"
+                    files_data[py_obj]["# Imported modules"].add(row)
+                    break
+                elif i == len(module_name_path.parts):
+                    class_ = import_.abs_path
+                    if class_ in all_classes_links:
+                        module_name = Path("/".join(class_.split(".")[:-1])).as_posix() + ".py"
+                        class_name = class_.split(".")[-1]
+                        files_data[py_obj]["# Imported classes"].append(f"[[{module_name}#{class_name}|{class_name}]]")
+                    else:
+                        files_data[py_obj]["# Other imports"].append(class_)
+
+
+def create_md_files_from_dict(files_data, docs_path):
+    for py_obj, text_dict in files_data.items():
+        md_file = docs_path / (py_obj.filename + ".md")
+        md_file.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with md_file.open(mode="w", encoding='utf-8') as md_file_obj:
+                rows = [text_dict['Header'],
+                        text_dict['link_to_file'], ]
+                for key, value in text_dict.items():
+                    if value and (isinstance(value, list) or isinstance(value, set)):
+                        rows.append(key)
+                        rows += sorted(list(value))
+                md_file_obj.write("\n".join(rows))
+        except Exception as exc:
+            raise exc
+
+
 @logger.catch()
 def start_generate(project_path=CURRENT_DIR, env_path_name=VENV_PATH_NAME, docs_path=None):
     project_path = Path(project_path)
@@ -117,61 +160,26 @@ def start_generate(project_path=CURRENT_DIR, env_path_name=VENV_PATH_NAME, docs_
     py_files = get_all_py_files_without_env(env_path, project_path)
     py_file_objects = [PyFile(file_path, project_path) for file_path in py_files]
 
-    all_classes_links = {py_obj.get_module_name_for_import() + "." + class_
-                         for py_obj in py_file_objects
-                         for class_ in py_obj.classes}
+    files_data = {py_obj: {"Header": START_ROWS,
+                           "link_to_file": f'[Link to file]({(py_obj.get_uri())})',
+                           "# Implemented classes": [f'#### {class_}' for class_ in py_obj.classes],
+                           "# Imported modules": set(),
+                           "# Imported classes": [],
+                           "# Other imports": []
+                           }
+                  for py_obj in py_file_objects}
 
-    # тут хранятся строки для всех файлов MD
-    files_text_dict = {py_obj: {"Header": START_ROWS,
-                                "link_to_file": f'[Link to file]({(py_obj.get_uri())})',
-                                "# Implemented classes": [f'#### {class_}' for class_ in py_obj.classes],
-                                "# Imported modules": [],
-                                "# Imported classes": [],
-                                "# Other imports": []
-                                }
-                       for py_obj in py_file_objects}
+    fill_import_groups(files_data, py_file_objects)
 
-    py_file_import_classes_dict = {}
-    for py_obj in py_file_objects:
-        for import_ in py_obj.import_elements:
-            module_name_path = Path(import_.abs_path.replace(".", "/"))
-            for i in range(len(module_name_path.parts), 0, -1):
-                name = "/".join(module_name_path.parts[:i])
-                name_with_py = Path(str(name) + ".py")
-                if name_with_py in py_files:
-                    row = f"[[{name_with_py.as_posix()}|{name_with_py.name}]]"
-                    files_text_dict[py_obj]["# Imported modules"].append(row)
-                    break
-                elif i == len(module_name_path.parts):
-                    py_file_import_classes_dict.setdefault(py_obj, [])
-                    py_file_import_classes_dict[py_obj].append(import_.abs_path)
-
-    for py_obj, classes in py_file_import_classes_dict.items():
-        for class_ in classes:
-            if class_ in all_classes_links:
-                module_name = Path("/".join(class_.split(".")[:-1])).as_posix() + ".py"
-                class_name = class_.split(".")[-1]
-                files_text_dict[py_obj]["# Imported classes"].append(f"[[{module_name}#{class_name}|{class_name}]]")
-            else:
-                files_text_dict[py_obj]["# Other imports"].append(class_)
-
-    for py_obj, text_dict in files_text_dict.items():
-        doc_file = docs_path / (py_obj.filename + ".md")
-        doc_file.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            with doc_file.open(mode="w", encoding='utf-8') as doc_file_obj:
-                rows = [text_dict['Header'],
-                        text_dict['link_to_file'], ]
-                for key, value in text_dict.items():
-                    if not isinstance(value, list):
-                        continue
-                    if value:
-                        rows.append(key)
-                        rows += value
-                doc_file_obj.write("\n".join(rows))
-        except Exception as exc:
-            raise exc
+    create_md_files_from_dict(files_data, docs_path)
+    return docs_path
 
 
 if __name__ == '__main__':
-    start_generate(r"d:\dev\RFM")
+    main_path = r"d:\dev"
+    folders = walk(main_path).__next__()[1]
+    for folder in folders:
+        path = Path(main_path) / folder
+        print(f'Генерация MD файлов для проекта {path.name}')
+        docs_path = start_generate(project_path=path, env_path_name="venv")
+        print(f'Открой в Obsidian папку {docs_path}')
